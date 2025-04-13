@@ -1,8 +1,8 @@
-#include <debug.h>
+
 #include <Arduino.h> // This is needed for the ESP32 to work with base Arduino libraries
-#include "debug.h"
 #include "common.h"
-//#include "dc_motors.h"
+
+#include <debug.h>
 #include "servo_motors.h"
 #include "communications.h"
 #include "stdint.h"
@@ -20,11 +20,12 @@
 #define NUMBALLS 3 // Number of balls in the field
 #define pinSW 21 //limit switch pin
 //----------------------------------FUNCS----------------------------------
-void setupEncoderInterrupt();
+
+void setupEncoderInterupt();
 void IRAM_ATTR onEncoderTimer();
-void setupPIDInterrupt();
+void setupPIDInterupt();
 void IRAM_ATTR onPIDTimer();
-void SetupDCMotor();
+void setupMotor();
 void DCMotorCalibration();
 
 
@@ -36,7 +37,7 @@ int goToLoction();
 double* transformRobotPos(uint16_t X, uint16_t Y);
 void open(Servo* clawservo);
 void close(Servo* clawservo);
-
+void DCMotorCalibration();
 //----------------------------------VARS----------------------------------
 /*
 RobotPose: rotation, and location of the robot.
@@ -105,25 +106,25 @@ int pidSampleTime = 10; // milliseconds
 
 const int motCH1 = 4, motCH2 = 5; // Motor channels
 const char enCHApin = 14, enCHBpin = 27;
-const char motIN1pin = 12, motIN2pin = 13; // Motor IN pins
+const char motIN1pin = 13, motIN2pin = 12; // Motor IN pins
 volatile long position = 0; // Encoder position
 volatile bool lastEncA = 0, lastEncB = 0;
 volatile bool newEncA = 0, newEncB = 0;
 volatile bool error;
 
-double input = 0, output = 0, setpoint = 0;
-double kp = 5.0, ki = 2.0, kd = 0.5;
+double input = 0, output = 0, setpoint = 120, angle = 0;
+double kp = 22, ki = 13, kd = 19;
 PID myPID(&input, &output, &setpoint, kp, ki, kd, DIRECT);
-/*
-Median Filters for sensor values
-*/
+
+hw_timer_t* encoderTimer = NULL;
+hw_timer_t* PIDtimer = NULL;
+
 MedianFilter<double>robotXFilter(BUFFLENGTH);
 MedianFilter<double>robotYFilter(BUFFLENGTH);
 MedianFilter<double>robotThetaFilter(BUFFLENGTH);
 MedianFilter<double>IRSensorMagnitudeFilter(BUFFLENGTH);
 
-hw_timer_t* encoderTimer = NULL;
-hw_timer_t* PIDtimer = NULL;
+
 
 
 //-------------------SETUP----------------------------------
@@ -133,7 +134,7 @@ void setup() {
   //---------General Setup---------
   Serial.begin(115200); //begin serial communication at 115200 baud rate
   setupServos();      //setup the servos
-  setupCommunications();  //setup the communications with the camera
+  //setupCommunications();  //setup the communications with the camera
 
   //---------Drive Servo Setup---------
   servo3.attach(SERVO2_PIN, 1300, 1700);
@@ -150,21 +151,19 @@ void setup() {
   pinMode(enCHApin, INPUT);
   pinMode(enCHBpin, INPUT);
   // set up timer interrupts
-  setupEncoderInterrupt();
-  setupPIDInterrupt();
+  setupEncoderInterupt();
+  setupPIDInterupt();
   // set up motor drive variables
-  pinMode(enCHApin, INPUT_PULLDOWN);
-  pinMode(enCHBpin, INPUT_PULLDOWN);
-  ledcSetup(motCH1, PWMfreq, PWMresolution);
-  ledcSetup(motCH2, PWMfreq, PWMresolution);
-  ledcAttachPin(motIN1pin, motCH1);
-  ledcAttachPin(motIN2pin, motCH2);
-  ledcWrite(motCH1, 0);
-  ledcWrite(motCH2, 0);
+  setupMotor();
   // set up PID 
   myPID.SetMode(AUTOMATIC);
   myPID.SetSampleTime(pidSampleTime);
   myPID.SetOutputLimits(-4095, 4095);
+  //setSetpoint1(300);
+
+  //setPIDgains1(11.4, 6.8, 3.5);
+  // set up PID 
+
 
 
   delay(1000);
@@ -390,29 +389,25 @@ int goToLoction() {
   return 0;
 }
 
-void loop() {
-  //goToLoction();
-  //goToHome();
-  DCMotorCalibration();
-}
+
 
 void DCMotorCalibration() {
-  if (Serial.available() > 0) {
-    int incomingByte = Serial.read();
-    if (incomingByte == 'a') {
-      setpoint += 300; // ticks
-    } else if (incomingByte == 'z') {
-      setpoint -= 300; // ticks
-    }
-  }
-  D_print("Setpoint: ");    D_print(setpoint); D_print(" ");
-  D_print("Measured : ");   D_print(input);    D_print(" ");
-  D_print("PWM Output: ");  D_print(output);   D_print(" ");
+
+
+  D_print("Setpoint: ");    D_print(setpoint); D_print("  ");
+  D_print("Measured : ");   D_print(input);    D_print("  ");
+  D_print("PWM Output: ");  D_print(output);   D_print("  ");
+  D_print("Angle: ");      D_print(angle);    D_print("  ");
   D_println("");
 
   delay(100);
 }
-
+void loop() {
+  //goToLoction();
+  //goToHome();
+  DCMotorCalibration();
+  delay(10);
+}
 void setupSwitchInterupt() {
 
 
@@ -421,6 +416,17 @@ void onSwitchInterupt() {
 
 
 }
+void setupMotor() {
+  pinMode(enCHApin, INPUT_PULLDOWN);
+  pinMode(enCHBpin, INPUT_PULLDOWN);
+  ledcSetup(motCH1, PWMfreq, PWMresolution);
+  ledcSetup(motCH2, PWMfreq, PWMresolution);
+  ledcAttachPin(motIN1pin, motCH1);
+  ledcAttachPin(motIN2pin, motCH2);
+  ledcWrite(motCH1, 0);
+  ledcWrite(motCH2, 0);
+}
+
 void setupEncoderInterupt() {
   encoderTimer = timerBegin(0, 80, true);  // timer 0, prescalewr of 80 give 1 microsecond tiks
   timerAttachInterrupt(encoderTimer, &onEncoderTimer, true); // connect interrupt function to hardware with pointer
@@ -449,7 +455,8 @@ void setupPIDInterupt() {
 }
 
 void IRAM_ATTR onPIDTimer() {
-  input = position;
+   //= position;
+  input = position / (2940.0 / 360.0);
   myPID.Compute();
   if (output > 0) { // drive motor based off pid output
     ledcWrite(motCH1, abs(output));
@@ -460,3 +467,4 @@ void IRAM_ATTR onPIDTimer() {
   }
 
 }
+

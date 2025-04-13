@@ -3,8 +3,8 @@
 #include "WiFi.h"
 #include "AsyncUDP.h"
 
-//#define DEBUG_RAW_UDP
-#define DEBUG_COMMUNICATIONS
+#define DEBUG_RAW_UDP
+//#define DEBUG_COMMUNICATIONS
 
 const char* ssid = "ME401_MIDTERM";
 const char* pass = "ILOVEROBOTS";

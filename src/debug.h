@@ -7,6 +7,7 @@
 #define D_write(...)    Serial.print(__VA_ARGS__)
 #define D_println(...)  Serial.println(__VA_ARGS__)
 #define D_printf(...)  Serial.printf(__VA_ARGS__)
+#define DEBUG_COMMUNICATIONS
 #else
 #define D_print(...)
 #define D_write(...)
