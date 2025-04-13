@@ -2,7 +2,7 @@
 #include <Arduino.h> // This is needed for the ESP32 to work with base Arduino libraries
 #include "debug.h"
 #include "common.h"
-#include "dc_motors.h"
+//#include "dc_motors.h"
 #include "servo_motors.h"
 #include "communications.h"
 #include "stdint.h"
@@ -20,6 +20,13 @@
 #define NUMBALLS 3 // Number of balls in the field
 #define pinSW 21 //limit switch pin
 //----------------------------------FUNCS----------------------------------
+void setupEncoderInterrupt();
+void IRAM_ATTR onEncoderTimer();
+void setupPIDInterrupt();
+void IRAM_ATTR onPIDTimer();
+void SetupDCMotor();
+void DCMotorCalibration();
+
 
 void hunting();
 void defending();
@@ -91,6 +98,22 @@ const double Kd2 = 1.95;//1.5
 
 static uint8_t IRSensorValue = 0; // IR Sensor Value
 
+const int PWMfreq = 5000; // PWM frequency
+const int PWMresolution = 12; // PWM resolution
+const int maxDutyCycle = (int)(pow(2, PWMresolution) - 1);; // Max duty cycle for the PWM
+int pidSampleTime = 10; // milliseconds
+
+const int motCH1 = 4, motCH2 = 5; // Motor channels
+const char enCHApin = 14, enCHBpin = 27;
+const char motIN1pin = 12, motIN2pin = 13; // Motor IN pins
+volatile long position = 0; // Encoder position
+volatile bool lastEncA = 0, lastEncB = 0;
+volatile bool newEncA = 0, newEncB = 0;
+volatile bool error;
+
+double input = 0, output = 0, setpoint = 0;
+double kp = 5.0, ki = 2.0, kd = 0.5;
+PID myPID(&input, &output, &setpoint, kp, ki, kd, DIRECT);
 /*
 Median Filters for sensor values
 */
@@ -98,9 +121,9 @@ MedianFilter<double>robotXFilter(BUFFLENGTH);
 MedianFilter<double>robotYFilter(BUFFLENGTH);
 MedianFilter<double>robotThetaFilter(BUFFLENGTH);
 MedianFilter<double>IRSensorMagnitudeFilter(BUFFLENGTH);
-/*
-hw_timer_t* switchTimer = NULL;
-*/
+
+hw_timer_t* encoderTimer = NULL;
+hw_timer_t* PIDtimer = NULL;
 
 
 //-------------------SETUP----------------------------------
@@ -123,7 +146,26 @@ void setup() {
   //pinMode(pinSW, INPUT);
 
 
-//---------Limit Switch Setup---------
+  //---------DC Motor Setup---------
+  pinMode(enCHApin, INPUT);
+  pinMode(enCHBpin, INPUT);
+  // set up timer interrupts
+  setupEncoderInterrupt();
+  setupPIDInterrupt();
+  // set up motor drive variables
+  pinMode(enCHApin, INPUT_PULLDOWN);
+  pinMode(enCHBpin, INPUT_PULLDOWN);
+  ledcSetup(motCH1, PWMfreq, PWMresolution);
+  ledcSetup(motCH2, PWMfreq, PWMresolution);
+  ledcAttachPin(motIN1pin, motCH1);
+  ledcAttachPin(motIN2pin, motCH2);
+  ledcWrite(motCH1, 0);
+  ledcWrite(motCH2, 0);
+  // set up PID 
+  myPID.SetMode(AUTOMATIC);
+  myPID.SetSampleTime(pidSampleTime);
+  myPID.SetOutputLimits(-4095, 4095);
+
 
   delay(1000);
 }
@@ -349,7 +391,72 @@ int goToLoction() {
 }
 
 void loop() {
-  goToLoction();
-  goToHome();
+  //goToLoction();
+  //goToHome();
+  DCMotorCalibration();
+}
+
+void DCMotorCalibration() {
+  if (Serial.available() > 0) {
+    int incomingByte = Serial.read();
+    if (incomingByte == 'a') {
+      setpoint += 300; // ticks
+    } else if (incomingByte == 'z') {
+      setpoint -= 300; // ticks
+    }
+  }
+  D_print("Setpoint: ");    D_print(setpoint); D_print(" ");
+  D_print("Measured : ");   D_print(input);    D_print(" ");
+  D_print("PWM Output: ");  D_print(output);   D_print(" ");
+  D_println("");
+
+  delay(100);
+}
+
+void setupSwitchInterupt() {
+
+
+}
+void onSwitchInterupt() {
+
+
+}
+void setupEncoderInterupt() {
+  encoderTimer = timerBegin(0, 80, true);  // timer 0, prescalewr of 80 give 1 microsecond tiks
+  timerAttachInterrupt(encoderTimer, &onEncoderTimer, true); // connect interrupt function to hardware with pointer
+  timerAlarmWrite(encoderTimer, 10, true);  // 10 microsecond timer interrupt
+  timerAlarmEnable(encoderTimer);
+}
+void IRAM_ATTR onEncoderTimer() {
+  newEncA = digitalRead(enCHApin); //read encoder value
+  newEncB = digitalRead(enCHBpin); //read encoder value
+  position += (newEncA ^ lastEncB) - (lastEncA ^ newEncB); // determine new position from encoder readings
+  if ((lastEncA ^ newEncA) & (lastEncB ^ newEncB)) {
+    error = true;
+  }
+  lastEncA = newEncA;
+  lastEncB = newEncB;
+
+}
+
+void setupPIDInterupt() {
+  //auto pidFunc = std::bind(&onPIDTimer, *pidTimer);
+  PIDtimer = timerBegin(1, 80, true);  // timer 1, prescalewr of 80 give 1 microsecond tiks
+  timerAttachInterrupt(PIDtimer, &onPIDTimer, true); // connect interrupt function to hardware with pointer
+  timerAlarmWrite(PIDtimer, 10000, true);  // 10 millisecond timer interrupt
+  timerAlarmEnable(PIDtimer);
+
+}
+
+void IRAM_ATTR onPIDTimer() {
+  input = position;
+  myPID.Compute();
+  if (output > 0) { // drive motor based off pid output
+    ledcWrite(motCH1, abs(output));
+    ledcWrite(motCH2, 0);
+  } else {
+    ledcWrite(motCH2, abs(output));
+    ledcWrite(motCH1, 0);
+  }
 
 }
