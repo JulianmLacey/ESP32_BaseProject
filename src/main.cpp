@@ -15,10 +15,13 @@
 #define HOMEX 220 //Home location
 #define HOMEY 220 //Home location
 #define BUFFLENGTH 5//Buffer Length for Median Filter
-#define IRSENSORPIN 36  // IR Sensor Pin
-#define IRSENSORENABLE 10 // IR Sensor Enable Pin
+#define IRDISTBUFFLENGTH 30//Buffer Length for Median Filter
+#define IRSENSORPIN 34  // IR Sensor Pin
+
 #define NUMBALLS 3 // Number of balls in the field
 #define pinSW 21 //limit switch pin
+
+#define IRSENSORENABLE 16 // IR Sensor Enable Pin
 //----------------------------------FUNCS----------------------------------
 
 void setupEncoderInterupt();
@@ -122,10 +125,8 @@ hw_timer_t* PIDtimer = NULL;
 MedianFilter<double>robotXFilter(BUFFLENGTH);
 MedianFilter<double>robotYFilter(BUFFLENGTH);
 MedianFilter<double>robotThetaFilter(BUFFLENGTH);
-MedianFilter<double>IRSensorMagnitudeFilter(BUFFLENGTH);
-
-
-
+MedianFilter<double>IRSensorMagnitudeFilter(IRDISTBUFFLENGTH);
+//MedianFilter<double>IRSensorAngleFilter(BUFFLENGTH);
 
 //-------------------SETUP----------------------------------
 void setup() {
@@ -159,12 +160,9 @@ void setup() {
   myPID.SetMode(AUTOMATIC);
   myPID.SetSampleTime(pidSampleTime);
   myPID.SetOutputLimits(-4095, 4095);
-  //setSetpoint1(300);
 
-  //setPIDgains1(11.4, 6.8, 3.5);
-  // set up PID 
-
-
+  //---------IR Sensor Setup---------
+  pinMode(IRSENSORENABLE, OUTPUT);
 
   delay(1000);
 }
@@ -393,7 +391,6 @@ int goToLoction() {
 
 void DCMotorCalibration() {
 
-
   D_print("Setpoint: ");    D_print(setpoint); D_print("  ");
   D_print("Measured : ");   D_print(input);    D_print("  ");
   D_print("PWM Output: ");  D_print(output);   D_print("  ");
@@ -402,10 +399,22 @@ void DCMotorCalibration() {
 
   delay(100);
 }
+
+void calibrateIRSensor() {
+  digitalWrite(IRSENSORENABLE, HIGH);
+  IRSensorValue = analogRead(IRSENSORPIN);
+  Serial.println(IRSensorValue);
+  delay(50);
+}
+
 void loop() {
   //goToLoction();
   //goToHome();
-  DCMotorCalibration();
+
+  //DCMotorCalibration();
+  calibrateIRSensor();
+
+
   delay(10);
 }
 void setupSwitchInterupt() {
