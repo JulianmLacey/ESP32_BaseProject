@@ -15,15 +15,16 @@
 #define HOMEX 220 //Home location
 #define HOMEY 220 //Home location
 #define BUFFLENGTH 5//Buffer Length for Median Filter
-#define IRDISTBUFFLENGTH 30//Buffer Length for Median Filter
-#define IRSENSORPIN 34  // IR Sensor Pin
+#define IRDISTBUFFLENGTH 20//Buffer Length for Median Filter
+#define IRSENSORPIN 36  // IR Sensor Pin
 
 #define NUMBALLS 3 // Number of balls in the field
-#define pinSW 21 //limit switch pin
+#define pinSW 39 //limit switch pin
 
 #define IRSENSORENABLE 16 // IR Sensor Enable Pin
 //----------------------------------FUNCS----------------------------------
-
+void setupLimitInterupt();
+void IRAM_ATTR onSwitchInterupt();
 void setupEncoderInterupt();
 void IRAM_ATTR onEncoderTimer();
 void setupPIDInterupt();
@@ -100,7 +101,7 @@ const double Kp2 = 19;//12
 const double Kd2 = 1.95;//1.5
 
 
-static uint8_t IRSensorValue = 0; // IR Sensor Value
+static int IRSensorValue = 0; // IR Sensor Value
 
 const int PWMfreq = 5000; // PWM frequency
 const int PWMresolution = 12; // PWM resolution
@@ -114,6 +115,7 @@ volatile long position = 0; // Encoder position
 volatile bool lastEncA = 0, lastEncB = 0;
 volatile bool newEncA = 0, newEncB = 0;
 volatile bool error;
+volatile bool isSwitchDown = false;
 
 double input = 0, output = 0, setpoint = 120, angle = 0;
 double kp = 22, ki = 13, kd = 19;
@@ -121,6 +123,7 @@ PID myPID(&input, &output, &setpoint, kp, ki, kd, DIRECT);
 
 hw_timer_t* encoderTimer = NULL;
 hw_timer_t* PIDtimer = NULL;
+hw_timer_t* switchTimer = NULL;
 
 MedianFilter<double>robotXFilter(BUFFLENGTH);
 MedianFilter<double>robotYFilter(BUFFLENGTH);
@@ -151,11 +154,13 @@ void setup() {
   //---------DC Motor Setup---------
   pinMode(enCHApin, INPUT);
   pinMode(enCHBpin, INPUT);
+  pinMode(pinSW, INPUT);
   // set up timer interrupts
   setupEncoderInterupt();
   setupPIDInterupt();
+  setupLimitInterupt();
   // set up motor drive variables
-  setupMotor();
+  //setupMotor();
   // set up PID 
   myPID.SetMode(AUTOMATIC);
   myPID.SetSampleTime(pidSampleTime);
@@ -163,6 +168,8 @@ void setup() {
 
   //---------IR Sensor Setup---------
   pinMode(IRSENSORENABLE, OUTPUT);
+
+
 
   delay(1000);
 }
@@ -417,14 +424,7 @@ void loop() {
 
   delay(10);
 }
-void setupSwitchInterupt() {
 
-
-}
-void onSwitchInterupt() {
-
-
-}
 void setupMotor() {
   pinMode(enCHApin, INPUT_PULLDOWN);
   pinMode(enCHBpin, INPUT_PULLDOWN);
@@ -455,7 +455,7 @@ void IRAM_ATTR onEncoderTimer() {
 }
 
 void setupPIDInterupt() {
-  //auto pidFunc = std::bind(&onPIDTimer, *pidTimer);
+
   PIDtimer = timerBegin(1, 80, true);  // timer 1, prescalewr of 80 give 1 microsecond tiks
   timerAttachInterrupt(PIDtimer, &onPIDTimer, true); // connect interrupt function to hardware with pointer
   timerAlarmWrite(PIDtimer, 10000, true);  // 10 millisecond timer interrupt
@@ -464,7 +464,7 @@ void setupPIDInterupt() {
 }
 
 void IRAM_ATTR onPIDTimer() {
-   //= position;
+
   input = position / (2940.0 / 360.0);
   myPID.Compute();
   if (output > 0) { // drive motor based off pid output
@@ -477,3 +477,20 @@ void IRAM_ATTR onPIDTimer() {
 
 }
 
+void setupLimitInterupt() {
+  switchTimer = timerBegin(2, 80, true);  // timer 0, prescalewr of 80 give 1 microsecond tiks
+  timerAttachInterrupt(switchTimer, &onSwitchInterupt, true); // connect interrupt function to hardware with pointer
+  timerAlarmWrite(switchTimer, 10000, true);  // 10 microsecond timer interrupt
+  timerAlarmEnable(switchTimer);
+
+}
+
+
+void IRAM_ATTR onSwitchInterupt() {
+  isSwitchDown = digitalRead(pinSW);
+  if (isSwitchDown == true) {
+    Serial.println("Sum Behind u Dipshit");
+  }
+
+
+}
