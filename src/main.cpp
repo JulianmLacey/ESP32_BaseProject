@@ -17,10 +17,9 @@
 #define BUFFLENGTH 5//Buffer Length for Median Filter
 #define IRDISTBUFFLENGTH 20//Buffer Length for Median Filter
 #define IRSENSORPIN 36  // IR Sensor Pin
-
+#define SWEEPANGLE 90 // Sweep angle for the servo
 #define NUMBALLS 3 // Number of balls in the field
 #define pinSW 39 //limit switch pin
-
 #define IRSENSORENABLE 16 // IR Sensor Enable Pin
 //----------------------------------FUNCS----------------------------------
 void setupLimitInterupt();
@@ -117,8 +116,8 @@ volatile bool newEncA = 0, newEncB = 0;
 volatile bool error;
 volatile bool isSwitchDown = false;
 
-double input = 0, output = 0, setpoint = 120, angle = 0;
-double kp = 22, ki = 13, kd = 19;
+double input = 0, output = 0, setpoint = 60, angle = 0;
+double kp = 135, ki = 16, kd = 0.68;//1.5;
 PID myPID(&input, &output, &setpoint, kp, ki, kd, DIRECT);
 
 hw_timer_t* encoderTimer = NULL;
@@ -146,11 +145,6 @@ void setup() {
   clawServo.attach(SERVO3_PIN);
 
 
-  //---------Limit Switch Setup---------
-  //pinMode(IRSENSORENABLE, OUTPUT);
-  //pinMode(pinSW, INPUT);
-
-
   //---------DC Motor Setup---------
   pinMode(enCHApin, INPUT);
   pinMode(enCHBpin, INPUT);
@@ -160,7 +154,7 @@ void setup() {
   setupPIDInterupt();
   setupLimitInterupt();
   // set up motor drive variables
-  //setupMotor();
+  setupMotor();
   // set up PID 
   myPID.SetMode(AUTOMATIC);
   myPID.SetSampleTime(pidSampleTime);
@@ -169,15 +163,9 @@ void setup() {
   //---------IR Sensor Setup---------
   pinMode(IRSENSORENABLE, OUTPUT);
 
-
-
   delay(1000);
 }
 
-//void setupSwitchInterupt() {
-  //pinMode(pinSW, INPUT);
-  //attachInterrupt(digitalPinToInterrupt(pinSW), onSwitchInterupt, FALLING);
-//}
 //-------------------STATES----------------------------------
 
 void hunting() {}
@@ -418,8 +406,8 @@ void loop() {
   //goToLoction();
   //goToHome();
 
-  //DCMotorCalibration();
-  calibrateIRSensor();
+  DCMotorCalibration();
+  //calibrateIRSensor();
 
 
   delay(10);
@@ -466,6 +454,7 @@ void setupPIDInterupt() {
 void IRAM_ATTR onPIDTimer() {
 
   input = position / (2940.0 / 360.0);
+  //setpoint = (input < -60) || (input > 60) ? -setpoint : setpoint;
   myPID.Compute();
   if (output > 0) { // drive motor based off pid output
     ledcWrite(motCH1, abs(output));
@@ -491,6 +480,4 @@ void IRAM_ATTR onSwitchInterupt() {
   if (isSwitchDown == true) {
     Serial.println("Sum Behind u Dipshit");
   }
-
-
 }
