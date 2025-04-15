@@ -3,7 +3,7 @@
 #include "WiFi.h"
 #include "AsyncUDP.h"
 
-#define DEBUG_RAW_UDP
+//#define DEBUG_RAW_UDP
 //#define DEBUG_COMMUNICATIONS
 
 const char* ssid = "ME401_MIDTERM";
