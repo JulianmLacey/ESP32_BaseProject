@@ -1,7 +1,7 @@
 #define Motion
 
-#define Debug
-//#define Production
+//#define Debug
+#define Production
 
 #include <Arduino.h> // This is needed for the ESP32 to work with base Arduino libraries
 #include "common.h"
@@ -27,6 +27,7 @@
 #define IRSENSORENABLE 16 // IR Sensor Enable Pin
 
 //----------------------------------FUNCS----------------------------------
+int updateRobotPosition();
 void setupLimitInterupt();
 void IRAM_ATTR onSwitchInterupt();
 void setupEncoderInterupt();
@@ -36,19 +37,21 @@ void IRAM_ATTR onPIDTimer();
 void setupMotor();
 void DCMotorCalibration();
 
-
+int goToLocation(double dx, double dy);
 void hunting();
 void defending();
 void capturing();
 void goToHome();
-int goToLoction();
+
 double* transformRobotPos(uint16_t X, uint16_t Y);
 void open(Servo* clawservo);
 void close(Servo* clawservo);
 void DCMotorCalibration();
+void calibrateIRSensor();
+BallPosition* updateClosestCylinder();
 //----------------------------------VARS----------------------------------
 
-RobotPose myPose;
+static RobotPose myPose;
 BallPosition currentBallPoss[ 20 ];
 Servo clawServo;
 
@@ -103,7 +106,6 @@ MedianFilter<double>robotXFilter(BUFFLENGTH);
 MedianFilter<double>robotYFilter(BUFFLENGTH);
 MedianFilter<double>robotThetaFilter(BUFFLENGTH);
 MedianFilter<double>IRSensorMagnitudeFilter(IRDISTBUFFLENGTH);
-static RobotPose myPose;
 
 
 
@@ -119,13 +121,13 @@ void setup() {
 #define D_write(...)
 #define D_println(...)
 #define D_printf(...)
-#else
+#endif
 #define D_print(...)    Serial.print(__VA_ARGS__)
 #define D_write(...)    Serial.print(__VA_ARGS__)
 #define D_println(...)  Serial.println(__VA_ARGS__)
 #define D_printf(...)  Serial.printf(__VA_ARGS__)
-#define DEBUG_COMMUNICATIONS
-#endif
+
+
 
 #ifdef Motion
   setupMotor();
@@ -161,13 +163,14 @@ void setup() {
 void loop() {
   hunting();
   capturing();
+  //calibrateIRSensor();
 }
 
 
 //-------------------STATES----------------------------------
 
 void hunting() {
-
+  updateRobotPosition();
   BallPosition* closestBall = updateClosestCylinder();
   d_x = closestBall->x;
   d_y = closestBall->y;
@@ -256,11 +259,12 @@ int goToLocation(double dx, double dy) {
       servo3.writeMicroseconds(1500);
       servo4.writeMicroseconds(1500);
       atLocation = true;
-      return;
+      return 1;
     }
     prev_error_d = error_d;
     prev_error_theta = error_theta;
   }
+  return 0;
 }
 
 BallPosition* updateClosestCylinder() {
@@ -314,8 +318,10 @@ void DCMotorCalibration() {
 void calibrateIRSensor() {
   digitalWrite(IRSENSORENABLE, HIGH);
   IRSensorValue = analogRead(IRSENSORPIN);
+  double val = IRSensorMagnitudeFilter.AddValue(IRSensorValue);
   Serial.println(IRSensorValue);
   delay(50);
+  //Eqtn = 10209*x^(-0.738)
 }
 
 void setupMotor() {
