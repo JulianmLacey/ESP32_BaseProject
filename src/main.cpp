@@ -38,6 +38,9 @@ RobotPose: rotation, and location of the robot.
   .theta = rotation in radians
   .valid = true if the robot is in a valid location
 */
+int wallCertaintyMatrix[ 5 ][ 5 ] = { {0, 0, 0, 0, 0}, {0, 0, 0, 0, 0}, {0, 0, 0, 0, 0}, { 0, 0, 0, 0, 0 }, { 0, 0, 0, 0, 0 } }; // Wall Certainty Matrix
+
+ // Example obstacles
 RobotPose myPose;
 BallPosition currentBallPoss[ 20 ];
 
@@ -104,29 +107,7 @@ hw_timer_t* switchTimer = NULL;
 
 
 //-------------------SETUP----------------------------------
-void setup() {
 
-
-  //---------General Setup---------
-  Serial.begin(115200); //begin serial communication at 115200 baud rate
-  setupServos();      //setup the servos
-  setupCommunications();  //setup the communications with the camera
-
-  //---------Drive Servo Setup---------
-  servo3.attach(SERVO2_PIN, 1300, 1700);
-  servo4.attach(SERVO1_PIN, 1300, 1700);
-  clawServo.attach(SERVO3_PIN);
-
-
-  //---------Limit Switch Setup---------
-  //pinMode(IRSENSORENABLE, OUTPUT);
-  //pinMode(pinSW, INPUT);
-
-
-//---------Limit Switch Setup---------
-
-  delay(1000);
-}
 
 //void setupSwitchInterupt() {
   //pinMode(pinSW, INPUT);
@@ -348,8 +329,211 @@ int goToLoction() {
   return 0;
 }
 
-void loop() {
-  goToLoction();
-  goToHome();
+struct tileNode {
 
+  int x, y, gCost, hCost;
+  int wallCertainty;
+  bool explored;
+  tileNode* parent;
+
+  tileNode() : x(0), y(0), gCost(0), hCost(0), wallCertainty(0), explored(false), parent(nullptr) {}
+
+  tileNode(double dx, double dy) : x(0), y(0), gCost(0), hCost(0), wallCertainty(0), explored(false), parent(nullptr) {
+    //Euclidean distance heuristic
+    //double Dx = dx - x;
+    //double Dy = dy - y;
+    //hCost = sqrt(abs(Dx * Dx) + abs(Dy * Dy));
+
+    //Manhattan distance heuristic
+    hCost = abs(dx - x) + abs(dy - y);//
+  }
+  tileNode* getParent() { return this->parent; }
+  tileNode(int x, int y, int gCost, int hCost, int wallCertainty, bool explored, tileNode* parent)
+    : x(x), y(y), gCost(gCost), hCost(hCost), wallCertainty(wallCertainty), explored(explored), parent(parent) {}
+
+  int fCost() const { return gCost + hCost; };
+};
+
+
+
+
+const int gridWidth = 5;
+static tileNode path[ gridWidth ][ gridWidth ];
+tileNode* unExplored[ gridWidth * gridWidth ];
+bool isExplored[ gridWidth ][ gridWidth ];
+int unExploredCount = 0;
+
+
+void printCHar(int c) {
+  if (c == 1) {
+    Serial.print("#");
+  } else if (c == 2) {
+    Serial.print("X");
+  } else if (c == 3) {
+    Serial.print("?");
+  } else
+    Serial.print("o");
+
+}
+
+void printMap(tileNode* pathEnd) {
+  Serial.println("PrintingMap");
+  while (pathEnd != nullptr) {
+    wallCertaintyMatrix[ pathEnd->x ][ pathEnd->y ] = 2;
+    if (pathEnd->parent == nullptr) {
+      wallCertaintyMatrix[ pathEnd->x ][ pathEnd->y ] = 3;
+    }
+    pathEnd = pathEnd->getParent();
+  }
+  for (int i = 0; i < gridWidth; i++) {
+    for (int j = 0; j < gridWidth; j++) {
+      printCHar(wallCertaintyMatrix[ i ][ j ]);
+    }
+    Serial.println();
+  }
+}
+
+void initializeGrid() {
+  Serial.println("InitializingGrid");
+  for (int i = 0; i < gridWidth; i++) {
+    for (int j = 0; j < gridWidth; j++) {
+      path[ i ][ j ] = { x, y, 0, 0, wallCertaintyMatrix[ i ][ j ],false, nullptr };
+      isExplored[ i ][ j ] = false;
+    }
+  }
+}
+
+int getHeuristic(tileNode* a, tileNode* b) {
+  // Manhattan distance heuristic
+  return abs(a->x - b->x) + abs(a->y - b->y);
+}
+
+void addToOpenList(tileNode* node) {
+  Serial.println("Adding to Open List");
+  unExplored[ unExploredCount++ ] = node;
+  Serial.println(unExploredCount);
+}
+
+
+tileNode* getLowestFcostNode() {
+  if (unExplored[ 0 ] == nullptr) {
+    Serial.println("No unexplored nodes");
+    return nullptr;
+  }
+  tileNode* lowestNode = unExplored[ 0 ];
+  int lowestFcostIDX = 0;
+
+  for (int i = 0; i < unExploredCount; i++) {
+    if (unExplored[ i ]->fCost() < lowestNode->fCost()) {
+      lowestFcostIDX = unExplored[ i ]->fCost();
+      lowestNode = unExplored[ i ];
+    }
+  }
+  unExplored[ lowestFcostIDX ] = unExplored[ --unExploredCount ];
+  return lowestNode;
+
+}
+
+bool isInBounds(int x, int y) {
+  return (x >= 0 && x < gridWidth && y >= 0 && y < gridWidth);
+}
+
+void reConstructPath(tileNode* node) {
+  Serial.println("Reconstructing Path");
+  tileNode* currentNode = node;
+  while (currentNode != nullptr) {
+    // Do something with the path
+    currentNode = currentNode->getParent();
+  }
+}
+
+void AStarPathFinding(int startX, int startY, int targetX, int targetY) {
+  unExploredCount = 0;
+  initializeGrid();
+
+  static tileNode* startNode = &path[ startX ][ startY ];
+  tileNode* targetNode = &path[ targetX ][ targetY ];
+
+  addToOpenList(startNode);
+
+
+
+  while (unExploredCount > 0) {
+    Serial.println("Traversing");
+    tileNode* currentNode = getLowestFcostNode();
+    if (currentNode == targetNode) {
+
+      reConstructPath(currentNode);
+      printMap(currentNode);
+      return;
+    }
+
+    const int DX[ 4 ] = { 0, -1, 1, 0 };
+    const int DY[ 4 ] = { -1, 0, 0, 1 };
+
+
+    for (int i = 0; i < 4; i++) {
+      int nx = currentNode->x + DX[ i ];
+      int ny = currentNode->y + DY[ i ];
+
+      if (!isInBounds(nx, ny)) {
+        Serial.println("Skipping");
+        continue;
+      }
+      tileNode* neighbor = &path[ nx ][ ny ];
+      if (neighbor->wallCertainty || isExplored[ nx ][ ny ]) continue;
+
+      int tentativeG = currentNode->gCost + 1;
+      bool inOpen = false;
+      for (int j = 0; j < unExploredCount; j++) {
+        if (unExplored[ j ] == neighbor) {
+          inOpen = true;
+          continue;
+        }
+      }
+
+      if (!inOpen || tentativeG < neighbor->gCost) {
+        neighbor->gCost = tentativeG;
+        neighbor->hCost = getHeuristic(neighbor, targetNode);
+        neighbor->parent = currentNode;
+        if (!inOpen) addToOpenList(neighbor);
+      }
+    }
+  }
+  Serial.println("No path found");
+}
+void setup() {
+
+    //---------General Setup---------
+  Serial.begin(115200); //begin serial communication at 115200 baud rate
+    /*
+  setupServos();      //setup the servos
+  setupCommunications();  //setup the communications with the camera
+
+  //---------Drive Servo Setup---------
+  servo3.attach(SERVO2_PIN, 1300, 1700);
+  servo4.attach(SERVO1_PIN, 1300, 1700);
+  clawServo.attach(SERVO3_PIN);
+
+
+  //---------Limit Switch Setup---------
+  //pinMode(IRSENSORENABLE, OUTPUT);
+  //pinMode(pinSW, INPUT);
+
+
+//---------Limit Switch Setup---------
+*/
+  delay(5);
+  Serial.println("Setup Complete");
+
+  delay(1000);
+  //initializeGrid();
+  AStarPathFinding(0, 0, 4, 4);
+
+
+}
+void loop() {
+  //goToLoction();
+  //goToHome();
+  delay(1000000);
 }
