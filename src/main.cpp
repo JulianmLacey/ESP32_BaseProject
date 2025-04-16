@@ -328,42 +328,6 @@ int goToLoction() {
   }
   return 0;
 }
-
-struct tileNode {
-
-  int x, y, gCost, hCost;
-  int wallCertainty;
-  bool explored;
-  tileNode* parent;
-
-  tileNode() : x(0), y(0), gCost(0), hCost(0), wallCertainty(0), explored(false), parent(nullptr) {}
-
-  tileNode(double dx, double dy) : x(0), y(0), gCost(0), hCost(0), wallCertainty(0), explored(false), parent(nullptr) {
-    //Euclidean distance heuristic
-    //double Dx = dx - x;
-    //double Dy = dy - y;
-    //hCost = sqrt(abs(Dx * Dx) + abs(Dy * Dy));
-
-    //Manhattan distance heuristic
-    hCost = abs(dx - x) + abs(dy - y);//
-  }
-  tileNode* getParent() { return this->parent; }
-  tileNode(int x, int y, int gCost, int hCost, int wallCertainty, bool explored, tileNode* parent)
-    : x(x), y(y), gCost(gCost), hCost(hCost), wallCertainty(wallCertainty), explored(explored), parent(parent) {}
-
-  int fCost() const { return gCost + hCost; };
-};
-
-
-
-
-const int gridWidth = 5;
-static tileNode path[ gridWidth ][ gridWidth ];
-tileNode* unExplored[ gridWidth * gridWidth ];
-bool isExplored[ gridWidth ][ gridWidth ];
-int unExploredCount = 0;
-
-
 void printCHar(int c) {
   if (c == 1) {
     Serial.print("#");
@@ -371,13 +335,56 @@ void printCHar(int c) {
     Serial.print("X");
   } else if (c == 3) {
     Serial.print("?");
+  } else if (c == 4) {
+    Serial.print("O");
   } else
     Serial.print("o");
 
 }
 
+int gridWidth = 5;
+struct tileNode {
+
+  int x, y, gCost, hCost, fcost;
+  int wallCertainty;
+  bool explored;
+  tileNode* parent;
+
+  float fCost() {
+    return gCost + hCost;
+  }
+
+  void printNode() {
+    Serial.print("x: ");
+    Serial.print(x);
+    Serial.print(" y: ");
+    Serial.print(y);
+    Serial.print(" gCost: ");
+    Serial.print(gCost);
+    Serial.print(" hCost: ");
+    Serial.print(hCost);
+    Serial.print(" wallCertainty: ");
+    Serial.print(wallCertainty);
+    Serial.print(" explored: ");
+    Serial.println(explored);
+  }
+
+  tileNode* getParent() {
+    return parent;
+  }
+
+};
+
+
+
+tileNode grid[ 5 ][ 5 ];
+bool isExplored[ 5 ][ 5 ];
+int unExploredCount = 0;
+tileNode* unExplored[ 25 ] = { nullptr };
+
 void printMap(tileNode* pathEnd) {
   Serial.println("PrintingMap");
+
   while (pathEnd != nullptr) {
     wallCertaintyMatrix[ pathEnd->x ][ pathEnd->y ] = 2;
     if (pathEnd->parent == nullptr) {
@@ -385,9 +392,32 @@ void printMap(tileNode* pathEnd) {
     }
     pathEnd = pathEnd->getParent();
   }
-  for (int i = 0; i < gridWidth; i++) {
+  for (int i = gridWidth - 1; i >= 0; i--) {
     for (int j = 0; j < gridWidth; j++) {
-      printCHar(wallCertaintyMatrix[ i ][ j ]);
+      if (isExplored[ i ][ j ]) {
+        wallCertaintyMatrix[ i ][ j ] = 4;
+      } else {
+        printCHar(wallCertaintyMatrix[ i ][ j ]);
+      }
+    }
+    Serial.println();
+  }
+
+  for (int i = gridWidth - 1; i >= 0; i--) {
+    for (int j = 0; j < gridWidth; j++) {
+      grid[ i ][ j ].printNode();
+    }
+    Serial.println();
+  }
+}
+
+void printMapValues() {
+  Serial.println("PrintingMapValues");
+
+  for (int i = gridWidth - 1; i >= 0; i--) {
+    for (int j = 0; j < gridWidth; j++) {
+      Serial.print(grid[ i ][ j ].fCost());
+      Serial.print("  ");
     }
     Serial.println();
   }
@@ -395,27 +425,27 @@ void printMap(tileNode* pathEnd) {
 
 void initializeGrid() {
   Serial.println("InitializingGrid");
-  for (int i = 0; i < gridWidth; i++) {
+  for (int i = gridWidth - 1; i >= 0; i--) {
     for (int j = 0; j < gridWidth; j++) {
-      path[ i ][ j ] = { x, y, 0, 0, wallCertaintyMatrix[ i ][ j ],false, nullptr };
+      grid[ i ][ j ] = { i, j, 0, 0, 0, 0,false, nullptr };
       isExplored[ i ][ j ] = false;
     }
   }
 }
-
 int getHeuristic(tileNode* a, tileNode* b) {
   // Manhattan distance heuristic
   return abs(a->x - b->x) + abs(a->y - b->y);
 }
-
+bool isInBounds(int x, int y) {
+  return (x >= 0 && x < gridWidth && y >= 0 && y < gridWidth);
+}
 void addToOpenList(tileNode* node) {
   Serial.println("Adding to Open List");
   unExplored[ unExploredCount++ ] = node;
   Serial.println(unExploredCount);
 }
 
-
-tileNode* getLowestFcostNode() {
+tileNode* getLowestFcostNode(tileNode* nParent) {
   if (unExplored[ 0 ] == nullptr) {
     Serial.println("No unexplored nodes");
     return nullptr;
@@ -429,15 +459,11 @@ tileNode* getLowestFcostNode() {
       lowestNode = unExplored[ i ];
     }
   }
+  unExplored[ lowestFcostIDX ]->parent = nParent;
   unExplored[ lowestFcostIDX ] = unExplored[ --unExploredCount ];
   return lowestNode;
 
 }
-
-bool isInBounds(int x, int y) {
-  return (x >= 0 && x < gridWidth && y >= 0 && y < gridWidth);
-}
-
 void reConstructPath(tileNode* node) {
   Serial.println("Reconstructing Path");
   tileNode* currentNode = node;
@@ -448,14 +474,75 @@ void reConstructPath(tileNode* node) {
 }
 
 void AStarPathFinding(int startX, int startY, int targetX, int targetY) {
-  unExploredCount = 0;
+  tileNode head = { startX, startY, 0, 0, 0, 0, false, nullptr };
+
+
+
+
+
+  //unExploredCount = 0;
   initializeGrid();
 
-  static tileNode* startNode = &path[ startX ][ startY ];
-  tileNode* targetNode = &path[ targetX ][ targetY ];
+  static tileNode* startNode = &grid[ startX ][ startY ];
+  tileNode* targetNode = &grid[ targetX ][ targetY ];
 
   addToOpenList(startNode);
+  Serial.println(getHeuristic(startNode, targetNode));
 
+
+  while (unExploredCount > 0) {
+    Serial.println("Traversing");
+
+    tileNode* currentNode = getLowestFcostNode(currentNode);
+    if (currentNode == targetNode) {
+
+      //reConstructPath(currentNode);
+      printMapValues();
+      printMap(currentNode);
+      return;
+    }
+
+    const int DX[ 4 ] = { 0, -1, 1, 0 };
+    const int DY[ 4 ] = { -1, 0, 0, 1 };
+
+
+    for (int i = 0; i < 4; i++) {
+      int nx = currentNode->x + DX[ i ];
+      int ny = currentNode->y + DY[ i ];
+
+      if (!isInBounds(nx, ny)) {
+        Serial.println("Skipping");
+        continue;
+      }
+      tileNode* neighbor = &grid[ nx ][ ny ];
+      //neighbor->parent = currentNode;
+      if (neighbor->wallCertainty || isExplored[ nx ][ ny ]) continue;
+
+      int tentativeG = currentNode->gCost + 1;
+      bool inOpen = false;
+      for (int j = 0; j < unExploredCount; j++) {
+        if (unExplored[ j ] == neighbor) {
+          inOpen = true;
+          continue;
+        }
+      }
+
+      if (!inOpen || tentativeG < neighbor->gCost) {
+        neighbor->gCost = tentativeG;
+        neighbor->hCost = getHeuristic(neighbor, targetNode);
+        neighbor->parent = currentNode;
+        if (!inOpen) addToOpenList(neighbor);
+      }
+    }
+  }
+  Serial.println("No path found");
+  printMapValues();
+  printMap(targetNode);
+  //printMapValues();
+
+}
+
+ /*
 
 
   while (unExploredCount > 0) {
@@ -501,7 +588,8 @@ void AStarPathFinding(int startX, int startY, int targetX, int targetY) {
     }
   }
   Serial.println("No path found");
-}
+  */
+
 void setup() {
 
     //---------General Setup---------
