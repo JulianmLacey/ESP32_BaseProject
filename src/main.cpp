@@ -1,4 +1,4 @@
-//#define Motion
+#define Motion
 
 #define Debug
 //#define Production
@@ -83,11 +83,11 @@ float error_theta = 0;
 float prev_error_d = 0;
 float prev_error_theta = 0;
 
-const float Kp1 = 1;//1
-const float Kd1 = 2.7;//1.1
+const float Kp1 = 0.6;//1
+const float Kd1 = 1;//1.1
 
-const float Kp2 = 19;//12
-const float Kd2 = 1.95;//1.5
+const float Kp2 = 9.9;//12
+const float Kd2 = 2.55;//1.5
 
 
 static uShort IRSensorValue = 0; // IR Sensor Value
@@ -201,6 +201,7 @@ void setup() {
   pinMode(IRSENSORENABLE, OUTPUT);
 
   //---------Path Setup---------
+  /*
   setupGrid();
   if (findPath(0, 0, 9, 9)) {
     Serial.println("Path found!");
@@ -208,6 +209,7 @@ void setup() {
   } else {
     Serial.println("No path found!");
   }
+    */
   delay(1000);
 }
 
@@ -220,6 +222,9 @@ void loop() {
   //hunting();
   //capturing();
   //calibrateIRSensor();
+  DCMotorCalibration();
+
+
 }
 
 
@@ -654,7 +659,7 @@ void setupPIDInterupt() {
 void IRAM_ATTR onPIDTimer() {
 
   input = position / (2940.0 / 360.0);
-  //setpoint = (input < -60) || (input > 60) ? -setpoint : setpoint;
+  setpoint = (input < -60) || (input > 60) ? -setpoint : setpoint;
   myPID.Compute();
   if (output > 0) { // drive motor based off pid output
     ledcWrite(motCH1, abs(output));
