@@ -1,7 +1,7 @@
-#define Motion
+//#define Motion
 
-//#define Debug
-#define Production
+#define Debug
+//#define Production
 
 #include <Arduino.h> // This is needed for the ESP32 to work with base Arduino libraries
 #include "common.h"
@@ -26,7 +26,15 @@
 #define pinSW 39 //limit switch pin
 #define IRSENSORENABLE 16 // IR Sensor Enable Pin
 
-//----------------------------------FUNCS----------------------------------
+#define GRID_WIDTH 10
+#define GRID_HEIGHT 10
+#define MAX_NODES 100
+
+
+
+/* -------------------------------------------------------------------------- */
+/*                                  Functions                                 */
+/* -------------------------------------------------------------------------- */
 int updateRobotPosition();
 void setupLimitInterupt();
 void IRAM_ATTR onSwitchInterupt();
@@ -37,7 +45,7 @@ void IRAM_ATTR onPIDTimer();
 void setupMotor();
 void DCMotorCalibration();
 
-int goToLocation(double dx, double dy);
+int goToLocation(float dx, float dy);
 void hunting();
 void defending();
 void capturing();
@@ -49,39 +57,43 @@ void close(Servo* clawservo);
 void DCMotorCalibration();
 void calibrateIRSensor();
 BallPosition* updateClosestCylinder();
-//----------------------------------VARS----------------------------------
 
+
+/* -------------------------------------------------------------------------- */
+/*                                  Variables                                 */
+/* -------------------------------------------------------------------------- */
+typedef unsigned short uShort;
 static RobotPose myPose;
 BallPosition currentBallPoss[ 20 ];
 Servo clawServo;
 
 
-int ballNum; //number of balls/cylinders in the field
-double x = 0;  //x location of robot in pixels
-double y = 0;  //y location of robot in pixels
-double theta = 0; //rotation of robot in radians
-double d_x = 0, d_y = 0; //x and y location of the target
-double omega_1, omega_2, trueOmega_1, trueOmega_2;
+uShort ballNum; //number of balls/cylinders in the field
+uShort x = 0;  //x location of robot in pixels
+uShort y = 0;  //y location of robot in pixels
+float theta = 0; //rotation of robot in radians
+float d_x = 0, d_y = 0; //x and y location of the target
+float omega_1, omega_2, trueOmega_1, trueOmega_2;
 
-double error_x = 0;
-double error_y = 0;
-double error_d = 0;
-double error_theta = 0;
+float error_x = 0;
+float error_y = 0;
+float error_d = 0;
+float error_theta = 0;
 
-double prev_error_d = 0;
-double prev_error_theta = 0;
+float prev_error_d = 0;
+float prev_error_theta = 0;
 
-const double Kp1 = 1;//1
-const double Kd1 = 2.7;//1.1
+const float Kp1 = 1;//1
+const float Kd1 = 2.7;//1.1
 
-const double Kp2 = 19;//12
-const double Kd2 = 1.95;//1.5
+const float Kp2 = 19;//12
+const float Kd2 = 1.95;//1.5
 
 
-static int IRSensorValue = 0; // IR Sensor Value
+static uShort IRSensorValue = 0; // IR Sensor Value
 
-const int PWMfreq = 5000; // PWM frequency
-const int PWMresolution = 12; // PWM resolution
+const uShort PWMfreq = 5000; // PWM frequency
+const uShort PWMresolution = 12; // PWM resolution
 const int maxDutyCycle = (int)(pow(2, PWMresolution) - 1);; // Max duty cycle for the PWM
 int pidSampleTime = 10; // milliseconds
 
@@ -102,14 +114,46 @@ hw_timer_t* encoderTimer = NULL;
 hw_timer_t* PIDtimer = NULL;
 hw_timer_t* switchTimer = NULL;
 
-MedianFilter<double>robotXFilter(BUFFLENGTH);
-MedianFilter<double>robotYFilter(BUFFLENGTH);
-MedianFilter<double>robotThetaFilter(BUFFLENGTH);
-MedianFilter<double>IRSensorMagnitudeFilter(IRDISTBUFFLENGTH);
+MedianFilter<uShort>robotXFilter(BUFFLENGTH);
+MedianFilter<uShort>robotYFilter(BUFFLENGTH);
+MedianFilter<float>robotThetaFilter(BUFFLENGTH);
+MedianFilter<uShort>IRSensorMagnitudeFilter(IRDISTBUFFLENGTH);
 
+typedef signed char Byte;
+struct Node {
+  Byte x;
+  Byte y;
+  uShort g;        // Cost from start to current node
+  uShort h;        // Heuristic (estimated cost from current to goal)
+  uShort f;        // Total cost (g + h)
+  Byte parent;  // Index of parent node in the closed list
+};
 
+Byte grid[ GRID_HEIGHT ][ GRID_WIDTH ];
 
-//-------------------SETUP----------------------------------
+// Open and closed lists
+Node openList[ MAX_NODES ];
+Node closedList[ MAX_NODES ];
+Byte openCount = 0;
+Byte closedCount = 0;
+
+// Path storage
+Byte pathX[ MAX_NODES ];
+Byte pathY[ MAX_NODES ];
+Byte pathLength = 0;
+
+void setupGrid();
+bool findPath(Byte startX, Byte startY, Byte goalX, Byte goalY);
+Byte findNodeWithLowestF();
+bool isNodeInList(Node* list, Byte count, Byte x, Byte y, Byte* index);
+void reconstructPath(Byte goalX, Byte goalY);
+int calculateHeuristic(Byte x1, Byte y1, Byte x2, Byte y2);
+void printPath();
+
+// MARK: SETUP
+/* -------------------------------------------------------------------------- */
+/*                                    Setup                                   */
+/* -------------------------------------------------------------------------- */
 void setup() {
   //---------General Setup---------
   Serial.begin(115200);
@@ -121,19 +165,19 @@ void setup() {
 #define D_write(...)
 #define D_println(...)
 #define D_printf(...)
-#endif
+#else
 #define D_print(...)    Serial.print(__VA_ARGS__)
 #define D_write(...)    Serial.print(__VA_ARGS__)
 #define D_println(...)  Serial.println(__VA_ARGS__)
 #define D_printf(...)  Serial.printf(__VA_ARGS__)
-
+#endif
 
 
 #ifdef Motion
   setupMotor();
 #endif
 
-
+/* ------------------------------ Setup Sensors ----------------------------- */
 //---------Drive Servo Setup---------
   servo3.attach(SERVO2_PIN, 1300, 1700);
   servo4.attach(SERVO1_PIN, 1300, 1700);
@@ -156,13 +200,25 @@ void setup() {
   //---------IR Sensor Setup---------
   pinMode(IRSENSORENABLE, OUTPUT);
 
+  //---------Path Setup---------
+  setupGrid();
+  if (findPath(0, 0, 9, 9)) {
+    Serial.println("Path found!");
+    printPath();
+  } else {
+    Serial.println("No path found!");
+  }
   delay(1000);
 }
 
-/******************************************************Main Loop****************************************************** */
+/* -------------------------------------------------------------------------- */
+/*                                  Main Loop                                 */
+/* -------------------------------------------------------------------------- */
+//MARK: LOOP
+
 void loop() {
-  hunting();
-  capturing();
+  //hunting();
+  //capturing();
   //calibrateIRSensor();
 }
 
@@ -175,7 +231,7 @@ void hunting() {
   d_x = closestBall->x;
   d_y = closestBall->y;
   goToLocation(d_x, d_y);
-  return();
+  return;
 
 
 }
@@ -186,7 +242,233 @@ void defending() {
 void capturing() {
   goToLocation(HOMEX, HOMEY);
 }
+// MARK: PATHFINDING
+/* ------------------------------- Pathfinding ------------------------------ */
+void setupGrid() {
+  // Clear grid
+  for (Byte y = 0; y < GRID_HEIGHT; y++) {
+    for (Byte x = 0; x < GRID_WIDTH; x++) {
+      grid[ y ][ x ] = 0;  // Open space
+    }
+  }
 
+  // Add some obstacles (1 = obstacle)
+  grid[ 1 ][ 2 ] = 1;
+  grid[ 2 ][ 2 ] = 1;
+  grid[ 3 ][ 2 ] = 1;
+  grid[ 3 ][ 3 ] = 1;
+  grid[ 3 ][ 4 ] = 1;
+  grid[ 6 ][ 5 ] = 1;
+  grid[ 6 ][ 6 ] = 1;
+  grid[ 6 ][ 7 ] = 1;
+  grid[ 7 ][ 7 ] = 1;
+  grid[ 8 ][ 7 ] = 1;
+}
+
+// Calculate Manhattan distance heuristic
+int calculateHeuristic(Byte x1, Byte y1, Byte x2, Byte y2) {
+  return abs(x1 - x2) + abs(y1 - y2);
+}
+
+// Find the node with the lowest F score in the open list
+Byte findNodeWithLowestF() {
+  Byte lowestIndex = 0;
+  int lowestF = openList[ 0 ].f;
+
+  for (Byte i = 1; i < openCount; i++) {
+    if (openList[ i ].f < lowestF) {
+      lowestF = openList[ i ].f;
+      lowestIndex = i;
+    }
+  }
+
+  return lowestIndex;
+}
+
+// Check if a node exists in a list and return its index
+bool isNodeInList(Node* list, Byte count, Byte x, Byte y, Byte* index) {
+  for (Byte i = 0; i < count; i++) {
+    if (list[ i ].x == x && list[ i ].y == y) {
+      *index = i;
+      return true;
+    }
+  }
+  *index = 0;
+  return false;
+}
+
+// Reconstruct the path from start to goal
+void reconstructPath(Byte goalX, Byte goalY) {
+  pathLength = 0;
+
+  // Find the goal node in the closed list
+  Byte index = 0;
+  Byte currentIndex = 0;
+
+  if (isNodeInList(closedList, closedCount, goalX, goalY, &currentIndex)) {
+    while (true) {
+      // Add current node to path
+      pathX[ pathLength ] = closedList[ currentIndex ].x;
+      pathY[ pathLength ] = closedList[ currentIndex ].y;
+      pathLength++;
+
+      // Check if we reached the start node (parent index is itself)
+      if (closedList[ currentIndex ].parent == currentIndex) {
+        break;
+      }
+
+      // Move to parent node
+      currentIndex = closedList[ currentIndex ].parent;
+    }
+  }
+}
+
+// Main A* algorithm function
+bool findPath(Byte startX, Byte startY, Byte goalX, Byte goalY) {
+  // Clear the lists
+  openCount = 0;
+  closedCount = 0;
+
+  // Add start node to open list
+  openList[ openCount ].x = startX;
+  openList[ openCount ].y = startY;
+  openList[ openCount ].g = 0;
+  openList[ openCount ].h = calculateHeuristic(startX, startY, goalX, goalY);
+  openList[ openCount ].f = openList[ openCount ].g + openList[ openCount ].h;
+  openList[ openCount ].parent = 0;  // Parent is itself for start node
+  openCount++;
+
+  while (openCount > 0) {
+    // Find node with lowest F score
+    Byte currentIndex = findNodeWithLowestF();
+    Byte currentX = openList[ currentIndex ].x;
+    Byte currentY = openList[ currentIndex ].y;
+
+    // If goal reached, reconstruct path and return success
+    if (currentX == goalX && currentY == goalY) {
+      // Move the goal node to closed list first
+      closedList[ closedCount ] = openList[ currentIndex ];
+      closedCount++;
+
+      // Remove goal node from open list
+      openList[ currentIndex ] = openList[ openCount - 1 ];
+      openCount--;
+
+      reconstructPath(goalX, goalY);
+      return true;
+    }
+
+    // Move current node from open list to closed list
+    closedList[ closedCount ] = openList[ currentIndex ];
+    Byte closedCurrentIndex = closedCount;
+    closedCount++;
+
+    // Remove current node from open list
+    openList[ currentIndex ] = openList[ openCount - 1 ];
+    openCount--;
+
+    // Check all adjacent nodes (4-directional movement)
+    const Byte dx[ 4 ] = { 0, 1, 0, -1 };  // Right, Down, Left, Up
+    const Byte dy[ 4 ] = { 1, 0, -1, 0 };
+
+    for (Byte i = 0; i < 4; i++) {
+      Byte newX = currentX + dx[ i ];
+      Byte newY = currentY + dy[ i ];
+
+      // Check if new position is valid
+      if (newX >= GRID_WIDTH || newY >= GRID_HEIGHT) {
+        continue;  // Outside grid bounds
+      }
+
+      // Check if position is walkable
+      if (grid[ newY ][ newX ] == 1) {
+        continue;  // Obstacle
+      }
+
+      // Check if node is in closed list
+      Byte tempIndex;
+      if (isNodeInList(closedList, closedCount, newX, newY, &tempIndex)) {
+        continue;  // Skip if already in closed list
+      }
+
+      // Calculate G score for this path
+      int newG = closedList[ closedCurrentIndex ].g + 1;  // Assuming cost of 1 to move
+
+      // Check if node is already in open list
+      bool inOpenList = isNodeInList(openList, openCount, newX, newY, &tempIndex);
+
+      if (!inOpenList || newG < openList[ tempIndex ].g) {
+        // This path is better, update or add node
+        if (!inOpenList) {
+          // Make sure we don't exceed the array size
+          if (openCount >= MAX_NODES) {
+            continue;  // Skip if we reached the maximum number of nodes
+          }
+
+          tempIndex = openCount;
+          openCount++;
+        }
+
+        // Update or add node to open list
+        openList[ tempIndex ].x = newX;
+        openList[ tempIndex ].y = newY;
+        openList[ tempIndex ].g = newG;
+        openList[ tempIndex ].h = calculateHeuristic(newX, newY, goalX, goalY);
+        openList[ tempIndex ].f = openList[ tempIndex ].g + openList[ tempIndex ].h;
+        openList[ tempIndex ].parent = closedCurrentIndex;
+      }
+    }
+  }
+
+  // No path found
+  return false;
+}
+
+// Print the found path
+void printPath() {
+  Serial.print("Path length: ");
+  Serial.println(pathLength);
+
+  // Print in reverse order (from goal to start)
+  for (int i = pathLength - 1; i >= 0; i--) {
+    Serial.print("(");
+    Serial.print(pathX[ i ]);
+    Serial.print(",");
+    Serial.print(pathY[ i ]);
+    Serial.println(")");
+  }
+
+  // Print grid with path
+  Serial.println("Grid with path (S=start, G=goal, #=obstacle, .=path, _=open):");
+
+  for (Byte y = 0; y < GRID_HEIGHT; y++) {
+    for (Byte x = 0; x < GRID_WIDTH; x++) {
+      bool isOnPath = false;
+
+      // Check if this position is on the path
+      for (Byte i = 0; i < pathLength; i++) {
+        if (pathX[ i ] == x && pathY[ i ] == y) {
+          isOnPath = true;
+          break;
+        }
+      }
+
+      // Print appropriate character
+      if (x == 0 && y == 0) {
+        Serial.print("S");  // Start
+      } else if (x == 9 && y == 9) {
+        Serial.print("G");  // Goal
+      } else if (grid[ y ][ x ] == 1) {
+        Serial.print("#");  // Obstacle
+      } else if (isOnPath) {
+        Serial.print(".");  // Path
+      } else {
+        Serial.print("_");  // Open space
+      }
+    }
+    Serial.println();
+  }
+}
 
 int updateRobotPosition() {
   myPose = getRobotPose(myID);
@@ -206,9 +488,9 @@ int updateRobotPosition() {
     return 0;
   }
 }
+// MARK: Go To Location
 
-
-int goToLocation(double dx, double dy) {
+int goToLocation(float dx, float dy) {
 
   bool atLocation = false;
 
@@ -216,7 +498,7 @@ int goToLocation(double dx, double dy) {
     error_x = dx - x;
     error_y = dy - y;
     error_d = sqrt(abs(error_x * error_x) + abs(error_y * error_y));
-    error_theta = (atan2(error_y, error_x) - (theta / 1000)) * (180 / (PI)) - 90;
+    error_theta = (atan2(error_y, error_x) - (theta / 1000.0f)) * (180.0f / (PI)) - 90.0f;
 
     if (error_theta < -180) {
       error_theta = error_theta + 360;
@@ -323,7 +605,14 @@ void calibrateIRSensor() {
   delay(50);
   //Eqtn = 10209*x^(-0.738)
 }
+uint16_t getIRSensorDistance() {
+  digitalWrite(IRSENSORENABLE, HIGH);
+  IRSensorValue = IRSensorMagnitudeFilter.AddValue(analogRead(IRSENSORPIN));
+  return (uint16_t)(10209 * pow(IRSensorValue, -0.738));
 
+  //Eqtn = 10209*x^(-0.738)
+
+}
 void setupMotor() {
   pinMode(enCHApin, INPUT_PULLDOWN);
   pinMode(enCHBpin, INPUT_PULLDOWN);
